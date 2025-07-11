@@ -2,7 +2,7 @@ require('dotenv').config();
 
 const express = require('express');
 const cors = require('cors');
-const { MongoClient, ServerApiVersion } = require('mongodb');
+const { MongoClient, ServerApiVersion, ObjectId } = require('mongodb');
 
 const app = express();
 const port = process.env.PORT || 3000;
@@ -27,22 +27,59 @@ async function run() {
 
     console.log('✅ Connected to MongoDB');
 
-    // Root route to avoid "Cannot GET /" error
+    // Root route
     app.get('/', (req, res) => {
       res.send('Welcome to EduManage Server!');
     });
 
-    // Get all classes
+    // ✅ Get all classes or filter by email (for teacher dashboard)
     app.get('/classes', async (req, res) => {
-      const classes = await classCollection.find().toArray();
+      const email = req.query.email;
+      const filter = email ? { email } : {};
+      const classes = await classCollection.find(filter).toArray();
       res.json(classes);
     });
 
-    // Add a new class
+    // ✅ Get single class by ID (for see details)
+    app.get('/classes/:id', async (req, res) => {
+      const id = req.params.id;
+      const classData = await classCollection.findOne({ _id: new ObjectId(id) });
+      res.json(classData);
+    });
+
+    // ✅ Add new class
     app.post('/classes', async (req, res) => {
       const newClass = req.body;
-      newClass.status = 'pending'; // default status
+      newClass.status = 'pending';
       const result = await classCollection.insertOne(newClass);
+      res.json(result);
+    });
+
+    // ✅ Delete class by ID
+    app.delete('/classes/:id', async (req, res) => {
+      const id = req.params.id;
+      const result = await classCollection.deleteOne({ _id: new ObjectId(id) });
+      res.json(result);
+    });
+
+    // ✅ Update class by ID
+    app.put('/classes/:id', async (req, res) => {
+      const id = req.params.id;
+      const updatedData = req.body;
+
+      const update = {
+        $set: {
+          title: updatedData.title,
+          price: updatedData.price,
+          description: updatedData.description,
+          image: updatedData.image,
+        },
+      };
+
+      const result = await classCollection.updateOne(
+        { _id: new ObjectId(id) },
+        update
+      );
       res.json(result);
     });
 
