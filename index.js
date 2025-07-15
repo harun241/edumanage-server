@@ -8,7 +8,7 @@ const port = process.env.PORT || 3000;
 const uri = process.env.MONGO_URI;
 
 app.use(cors({
-  origin: '*', // Change this to your frontend origin in production
+  origin: '*',
   allowedHeaders: ['Content-Type', 'x-user-email', 'x-user-role'],
 }));
 app.use(express.json());
@@ -27,203 +27,216 @@ async function run() {
     const db = client.db('EduManageDB');
     const userCollection = db.collection('users');
     const classCollection = db.collection('classes');
-    const enrollCollection = db.collection('enroll'); // Enrollment collection
+    const enrollCollection = db.collection('enroll');
 
     console.log('✅ Connected to MongoDB');
 
-    // Middleware: Mock Auth from headers
-    function mockAuth(req, res, next) {
+    // ===== Middleware =====
+
+    // Mock authentication (from headers)
+    app.use((req, res, next) => {
       req.user = {
         email: req.headers['x-user-email'] || null,
         role: req.headers['x-user-role'] || null,
       };
-      // Debug logs - remove in production
-   
       next();
-    }
+    });
 
-    // Middleware: Admin only access
-    function requireAdmin(req, res, next) {
+    const requireAdmin = (req, res, next) => {
       if (req.user.role !== 'admin') {
         return res.status(403).json({ error: 'Admins only' });
       }
       next();
-    }
+    };
+    // সব ইউজার দেখার API (admin-only হলে requireAdmin যোগ করুন)
+app.get('/api/users', async (req, res) => {
+  const users = await userCollection.find({}).toArray();
+  res.json(users);
+});
 
-    app.use(mockAuth);
 
-    // Root
-    app.get('/', (req, res) => {
-      res.send('EduManage Server is Running 🚀');
-    });
+   
 
-    // ==== User Routes ====
+    // ===== User Routes =====
 
-    // POST: Create User (default role: student)
+    // Create user - role always 'student'
     app.post('/api/users', async (req, res) => {
-      try {
-        const { name, email, photo } = req.body;
-        if (!email) return res.status(400).json({ error: 'Email is required' });
+      const { name, email, photo } = req.body;
+      if (!email) return res.status(400).json({ error: 'Email is required' });
 
-        const existing = await userCollection.findOne({ email });
-        if (existing) return res.json({ message: 'User already exists' });
+      const existing = await userCollection.findOne({ email });
+      if (existing) return res.json({ message: 'User already exists' });
 
-        const result = await userCollection.insertOne({
-          name,
-          email,
-          photo,
-          role: 'student',
-        });
+      const result = await userCollection.insertOne({
+        name,
+        email,
+        photo,
+        role: 'student',
+        teacherRequest: false,
+      });
 
-        res.status(201).json({ message: 'User created', id: result.insertedId });
-      } catch (error) {
-        console.error('Create user error:', error);
-        res.status(500).json({ error: 'Server error creating user' });
-      }
+      res.status(201).json({ message: 'User created', id: result.insertedId });
     });
 
-    // GET: Get Role by Email
+    // Get user role
     app.get('/api/users/role', async (req, res) => {
-      try {
-        const email = req.query.email;
-        if (!email) return res.status(400).json({ error: 'Email required' });
+      const email = req.query.email;
+      if (!email) return res.status(400).json({ error: 'Email required' });
 
-        const user = await userCollection.findOne({ email });
-        if (!user) return res.status(404).json({ error: 'User not found' });
+      const user = await userCollection.findOne({ email });
+      if (!user) return res.status(404).json({ error: 'User not found' });
 
-        res.json({ role: user.role });
-      } catch (error) {
-        console.error('Get role error:', error);
-        res.status(500).json({ error: 'Server error fetching role' });
-      }
+      res.json({ role: user.role });
     });
 
-    // ==== Class Routes ====
+    // Student sends request to become teacher
+    app.post('/api/users/request-teacher', async (req, res) => {
+      const email = req.user.email;
+      if (!email) return res.status(400).json({ error: 'User not logged in' });
 
-    // Get all classes or filter by teacher email
+      const user = await userCollection.findOne({ email });
+      if (!user) return res.status(404).json({ error: 'User not found' });
+
+      if (user.teacherRequest) {
+        return res.status(400).json({ error: 'Teacher request already sent' });
+      }
+
+      if (user.role === 'teacher') {
+        return res.status(400).json({ error: 'You are already a teacher' });
+      }
+
+      await userCollection.updateOne({ email }, { $set: { teacherRequest: true } });
+      res.json({ message: 'Teacher request sent' });
+    });
+
+    // Admin: get all teacher requests
+    app.get('/api/users/teacher-requests', requireAdmin, async (req, res) => {
+      const requests = await userCollection.find({ teacherRequest: true }).toArray();
+      res.json(requests);
+    });
+
+    // Admin: approve teacher request
+    app.patch('/api/users/approve-teacher/:email', requireAdmin, async (req, res) => {
+      const email = req.params.email;
+
+      const result = await userCollection.updateOne(
+        { email, teacherRequest: true },
+        { $set: { role: 'teacher', teacherRequest: false } }
+      );
+
+      if (result.modifiedCount === 0) {
+        return res.status(404).json({ error: 'No pending request found for this user' });
+      }
+
+      res.json({ message: 'Teacher role approved' });
+    });
+
+    // Admin: deny teacher request
+    app.patch('/api/users/deny-teacher/:email', requireAdmin, async (req, res) => {
+      const email = req.params.email;
+
+      const result = await userCollection.updateOne(
+        { email, teacherRequest: true },
+        { $set: { teacherRequest: false } }
+      );
+
+      if (result.modifiedCount === 0) {
+        return res.status(404).json({ error: 'No pending request found for this user' });
+      }
+
+      res.json({ message: 'Teacher request denied' });
+    });
+
+    // ===== Class Routes =====
+
     app.get('/classes', async (req, res) => {
-      try {
-        const filter = req.query.email ? { email: req.query.email } : {};
-        const classes = await classCollection.find(filter).toArray();
-        res.json(classes);
-      } catch (error) {
-        console.error('Fetch classes error:', error);
-        res.status(500).json({ error: 'Server error fetching classes' });
-      }
+      const filter = req.query.email ? { email: req.query.email } : {};
+      const classes = await classCollection.find(filter).toArray();
+      res.json(classes);
     });
 
-    // Get a class by ID
     app.get('/classes/:id', async (req, res) => {
-      try {
-        const id = req.params.id;
-        if (!ObjectId.isValid(id)) return res.status(400).json({ error: 'Invalid ID' });
+      const id = req.params.id;
+      if (!ObjectId.isValid(id)) return res.status(400).json({ error: 'Invalid ID' });
 
-        const classDoc = await classCollection.findOne({ _id: new ObjectId(id) });
-        if (!classDoc) return res.status(404).json({ error: 'Class not found' });
+      const classDoc = await classCollection.findOne({ _id: new ObjectId(id) });
+      if (!classDoc) return res.status(404).json({ error: 'Class not found' });
 
-        res.json(classDoc);
-      } catch (error) {
-        console.error('Fetch class by ID error:', error);
-        res.status(500).json({ error: 'Server error fetching class' });
-      }
+      res.json(classDoc);
     });
 
-    // Add new class (teacher adds class, default status pending)
     app.post('/classes', async (req, res) => {
-      try {
-        const newClass = req.body;
-        if (!newClass.title || !newClass.price || !newClass.description || !newClass.image) {
-          return res.status(400).json({ error: 'Missing required fields' });
-        }
-
-        newClass.status = 'pending';
-        newClass.email = req.user.email;
-
-        const result = await classCollection.insertOne(newClass);
-        res.status(201).json({ message: 'Class added', id: result.insertedId });
-      } catch (error) {
-        console.error('Add class error:', error);
-        res.status(500).json({ error: 'Server error adding class' });
+      const newClass = req.body;
+      if (!newClass.title || !newClass.price || !newClass.description || !newClass.image) {
+        return res.status(400).json({ error: 'Missing required fields' });
       }
+
+      newClass.status = 'pending';
+      newClass.email = req.user.email;
+
+      const result = await classCollection.insertOne(newClass);
+      res.status(201).json({ message: 'Class added', id: result.insertedId });
     });
 
-    // Update class (admin or owner)
     app.put('/classes/:id', async (req, res) => {
-      try {
-        const id = req.params.id;
-        const update = req.body;
+      const id = req.params.id;
+      const update = req.body;
 
-        if (!ObjectId.isValid(id)) return res.status(400).json({ error: 'Invalid ID' });
+      if (!ObjectId.isValid(id)) return res.status(400).json({ error: 'Invalid ID' });
 
-        const classDoc = await classCollection.findOne({ _id: new ObjectId(id) });
-        if (!classDoc) return res.status(404).json({ error: 'Class not found' });
+      const classDoc = await classCollection.findOne({ _id: new ObjectId(id) });
+      if (!classDoc) return res.status(404).json({ error: 'Class not found' });
 
-        if (req.user.role !== 'admin' && req.user.email !== classDoc.email) {
-          return res.status(403).json({ error: 'Unauthorized' });
-        }
-
-        const allowedFields = ['title', 'price', 'description', 'image'];
-        const updateFields = {};
-        for (const key of allowedFields) {
-          if (update[key]) updateFields[key] = update[key];
-        }
-
-        const result = await classCollection.updateOne(
-          { _id: new ObjectId(id) },
-          { $set: updateFields }
-        );
-        res.json({ message: 'Class updated', modifiedCount: result.modifiedCount });
-      } catch (error) {
-        console.error('Update class error:', error);
-        res.status(500).json({ error: 'Server error updating class' });
+      if (req.user.role !== 'admin' && req.user.email !== classDoc.email) {
+        return res.status(403).json({ error: 'Unauthorized' });
       }
+
+      const allowedFields = ['title', 'price', 'description', 'image'];
+      const updateFields = {};
+      for (const key of allowedFields) {
+        if (update[key]) updateFields[key] = update[key];
+      }
+
+      const result = await classCollection.updateOne(
+        { _id: new ObjectId(id) },
+        { $set: updateFields }
+      );
+      res.json({ message: 'Class updated', modifiedCount: result.modifiedCount });
     });
 
-    // Patch class status (admin only)
     app.patch('/classes/:id/status', requireAdmin, async (req, res) => {
-      try {
-        const id = req.params.id;
-        const { status } = req.body;
-        if (!ObjectId.isValid(id)) return res.status(400).json({ error: 'Invalid ID' });
-        if (!['pending', 'approved', 'rejected'].includes(status)) {
-          return res.status(400).json({ error: 'Invalid status value' });
-        }
+      const id = req.params.id;
+      const { status } = req.body;
 
-        const result = await classCollection.updateOne(
-          { _id: new ObjectId(id) },
-          { $set: { status } }
-        );
-        res.json({ message: 'Status updated', modifiedCount: result.modifiedCount });
-      } catch (error) {
-        console.error('Update status error:', error);
-        res.status(500).json({ error: 'Server error updating status' });
+      if (!ObjectId.isValid(id)) return res.status(400).json({ error: 'Invalid ID' });
+      if (!['pending', 'approved', 'rejected'].includes(status)) {
+        return res.status(400).json({ error: 'Invalid status value' });
       }
+
+      const result = await classCollection.updateOne(
+        { _id: new ObjectId(id) },
+        { $set: { status } }
+      );
+      res.json({ message: 'Status updated', modifiedCount: result.modifiedCount });
     });
 
-    // Delete class (admin or owner)
     app.delete('/classes/:id', async (req, res) => {
-      try {
-        const id = req.params.id;
-        if (!ObjectId.isValid(id)) return res.status(400).json({ error: 'Invalid ID' });
+      const id = req.params.id;
+      if (!ObjectId.isValid(id)) return res.status(400).json({ error: 'Invalid ID' });
 
-        const classDoc = await classCollection.findOne({ _id: new ObjectId(id) });
-        if (!classDoc) return res.status(404).json({ error: 'Class not found' });
+      const classDoc = await classCollection.findOne({ _id: new ObjectId(id) });
+      if (!classDoc) return res.status(404).json({ error: 'Class not found' });
 
-        if (req.user.role !== 'admin' && req.user.email !== classDoc.email) {
-          return res.status(403).json({ error: 'Unauthorized' });
-        }
-
-        const result = await classCollection.deleteOne({ _id: new ObjectId(id) });
-        res.json({ message: 'Class deleted', deletedCount: result.deletedCount });
-      } catch (error) {
-        console.error('Delete class error:', error);
-        res.status(500).json({ error: 'Server error deleting class' });
+      if (req.user.role !== 'admin' && req.user.email !== classDoc.email) {
+        return res.status(403).json({ error: 'Unauthorized' });
       }
+
+      const result = await classCollection.deleteOne({ _id: new ObjectId(id) });
+      res.json({ message: 'Class deleted', deletedCount: result.deletedCount });
     });
 
-    // ==== Enrollment Routes ====
+    // ===== Enrollment Routes =====
 
-    // POST: Enroll in a class
     app.post('/enroll/:classId', async (req, res) => {
       try {
         const classId = req.params.classId;
@@ -232,22 +245,21 @@ async function run() {
         if (!email) return res.status(400).json({ error: 'User email missing' });
         if (!ObjectId.isValid(classId)) return res.status(400).json({ error: 'Invalid class ID' });
 
-        // Confirm class exists
         const classDoc = await classCollection.findOne({ _id: new ObjectId(classId) });
         if (!classDoc) return res.status(404).json({ error: 'Class not found' });
 
-        // Prevent duplicate enrollment
-        const existingEnrollment = await enrollCollection.findOne({ classId: new ObjectId(classId), email });
-        if (existingEnrollment) return res.status(400).json({ error: 'Already enrolled in this class' });
+        const existing = await enrollCollection.findOne({
+          classId: new ObjectId(classId),
+          email,
+        });
+        if (existing) return res.status(400).json({ error: 'Already enrolled in this class' });
 
-        // Insert enrollment record
-        const enrollment = {
+        const result = await enrollCollection.insertOne({
           classId: new ObjectId(classId),
           email,
           enrolledAt: new Date(),
-        };
+        });
 
-        const result = await enrollCollection.insertOne(enrollment);
         res.status(201).json({ message: 'Enrolled successfully', enrollmentId: result.insertedId });
       } catch (error) {
         console.error('Enroll error:', error);
@@ -255,74 +267,60 @@ async function run() {
       }
     });
 
-    // DELETE: Cancel enrollment
     app.delete('/enroll/:classId', async (req, res) => {
-      try {
-        const classId = req.params.classId;
-        const email = req.user.email;
+      const classId = req.params.classId;
+      const email = req.user.email;
 
-        if (!email) return res.status(400).json({ error: 'User email missing' });
-        if (!ObjectId.isValid(classId)) return res.status(400).json({ error: 'Invalid class ID' });
+      if (!email) return res.status(400).json({ error: 'User email missing' });
+      if (!ObjectId.isValid(classId)) return res.status(400).json({ error: 'Invalid class ID' });
 
-        // Remove enrollment
-        const result = await enrollCollection.deleteOne({ classId: new ObjectId(classId), email });
+      const result = await enrollCollection.deleteOne({
+        classId: new ObjectId(classId),
+        email,
+      });
 
-        if (result.deletedCount === 0) {
-          return res.status(404).json({ error: 'Enrollment not found or already cancelled' });
-        }
-
-        res.json({ message: 'Enrollment cancelled successfully' });
-      } catch (error) {
-        console.error('Cancel enrollment error:', error);
-        res.status(500).json({ error: 'Server error during cancellation' });
+      if (result.deletedCount === 0) {
+        return res.status(404).json({ error: 'Enrollment not found or already cancelled' });
       }
+
+      res.json({ message: 'Enrollment cancelled successfully' });
     });
 
-    app.get('/api/stats', async (req, res) => {
-  try {
-    const totalUsers = await userCollection.estimatedDocumentCount();
-    const totalClasses = await classCollection.estimatedDocumentCount();
-    const totalEnrollments = await enrollCollection.estimatedDocumentCount();
-
-    res.json({
-      totalUsers,
-      totalClasses,
-      totalEnrollments,
-    });
-  } catch (error) {
-    console.error('Error fetching stats:', error);
-    res.status(500).json({ error: 'Failed to fetch stats' });
-  }
-});
-
-    // GET: List enrollments for current user
     app.get('/enrollments', async (req, res) => {
-      try {
-        const email = req.user.email;
-        if (!email) return res.status(400).json({ error: 'User email missing' });
+      const email = req.user.email;
+      if (!email) return res.status(400).json({ error: 'User email missing' });
 
-        const enrollments = await enrollCollection.find({ email }).toArray();
-        res.json(enrollments);
+      const enrollments = await enrollCollection.find({ email }).toArray();
+      res.json(enrollments);
+    });
+
+    // ===== Stats Route =====
+    app.get('/api/stats', async (req, res) => {
+      try {
+        const totalUsers = await userCollection.estimatedDocumentCount();
+        const totalClasses = await classCollection.estimatedDocumentCount();
+        const totalEnrollments = await enrollCollection.estimatedDocumentCount();
+
+        res.json({ totalUsers, totalClasses, totalEnrollments });
       } catch (error) {
-        console.error('Get enrollments error:', error);
-        res.status(500).json({ error: 'Server error fetching enrollments' });
+        console.error('Error fetching stats:', error);
+        res.status(500).json({ error: 'Failed to fetch stats' });
       }
     });
 
-
-
-    // ==== End Enrollment Routes ====
-
-    // Start server
+    // ===== Start Server =====
     app.listen(port, () => {
-      console.log(`🚀 Server running on http://localhost:${port}`);
+      console.log(`🚀 Server running at http://localhost:${port}`);
     });
 
-    // Graceful shutdown
     process.on('SIGINT', async () => {
-      console.log('\nClosing MongoDB...');
+      console.log('\n🔌 Shutting down...');
       await client.close();
       process.exit(0);
+    });
+     // ===== Root =====
+    app.get('/', (req, res) => {
+      res.send('🚀 EduManage Server is Running!');
     });
   } catch (err) {
     console.error('❌ MongoDB Connection Failed:', err);
