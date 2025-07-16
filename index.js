@@ -175,7 +175,8 @@ app.get('/api/users', async (req, res) => {
       newClass.email = req.user.email;
 
       const result = await classCollection.insertOne(newClass);
-      res.status(201).json({ message: 'Class added', id: result.insertedId });
+      res.status(201).json({ message: 'Class added', insertedId: result.insertedId });
+
     });
 
     app.put('/classes/:id', async (req, res) => {
