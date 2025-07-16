@@ -308,6 +308,121 @@ app.get('/api/users', async (req, res) => {
         res.status(500).json({ error: 'Failed to fetch stats' });
       }
     });
+    // Add this collection for teacher requests
+const teacherRequestCollection = db.collection('teacherRequests');
+
+// ----------- User POST request to apply as teacher -----------
+app.post('/api/users/request-teacher', async (req, res) => {
+  const email = req.user.email;
+  if (!email) return res.status(400).json({ error: 'User not logged in' });
+
+  const { name, experience, title, category } = req.body;
+
+  if (!name || !experience || !title || !category) {
+    return res.status(400).json({ error: 'All fields are required' });
+  }
+
+  const user = await userCollection.findOne({ email });
+  if (!user) return res.status(404).json({ error: 'User not found' });
+
+  if (user.role === 'teacher') {
+    return res.status(400).json({ error: 'You are already a teacher' });
+  }
+
+  // Check if existing teacher request (pending or rejected)
+  let existingRequest = await teacherRequestCollection.findOne({ email });
+
+  if (existingRequest && existingRequest.status === 'pending') {
+    return res.status(400).json({ error: 'Teacher request already pending' });
+  }
+
+  const newRequest = {
+    email,
+    name,
+    experience,  // expected to be 'beginner', 'mid-level', or 'experienced'
+    title,
+    category,
+    status: 'pending',
+    requestedAt: new Date(),
+  };
+
+  if (existingRequest) {
+    // Update existing rejected request to pending again
+    await teacherRequestCollection.updateOne(
+      { email },
+      { $set: { ...newRequest, status: 'pending', requestedAt: new Date() } }
+    );
+  } else {
+    await teacherRequestCollection.insertOne(newRequest);
+  }
+
+  res.json({ message: 'Teacher request submitted for review' });
+});
+
+// ----------- User GET their teacher request status -----------
+app.get('/api/users/request-teacher/status', async (req, res) => {
+  const email = req.user.email;
+  if (!email) return res.status(400).json({ error: 'User not logged in' });
+
+  const request = await teacherRequestCollection.findOne({ email });
+  if (!request) return res.json({ status: null });
+
+  res.json({ status: request.status });
+});
+
+// ----------- User resubmit rejected request -----------
+app.patch('/api/users/request-teacher/resubmit', async (req, res) => {
+  const email = req.user.email;
+  if (!email) return res.status(400).json({ error: 'User not logged in' });
+
+  const request = await teacherRequestCollection.findOne({ email });
+  if (!request || request.status !== 'rejected') {
+    return res.status(400).json({ error: 'No rejected request to resubmit' });
+  }
+
+  await teacherRequestCollection.updateOne(
+    { email },
+    { $set: { status: 'pending', requestedAt: new Date() } }
+  );
+
+  res.json({ message: 'Teacher request resubmitted for review' });
+});
+
+// ----------- Admin: get all teacher requests -----------
+app.get('/api/users/teacher-requests', requireAdmin, async (req, res) => {
+  const requests = await teacherRequestCollection.find({ status: { $in: ['pending', 'rejected'] } }).toArray();
+  res.json(requests);
+});
+
+// ----------- Admin: approve teacher request -----------
+app.patch('/api/users/approve-teacher/:email', requireAdmin, async (req, res) => {
+  const email = req.params.email;
+
+  const request = await teacherRequestCollection.findOne({ email, status: 'pending' });
+  if (!request) return res.status(404).json({ error: 'No pending request found for this user' });
+
+  // Update user role to teacher
+  await userCollection.updateOne({ email }, { $set: { role: 'teacher' } });
+
+  // Update request status to approved
+  await teacherRequestCollection.updateOne({ email }, { $set: { status: 'approved', approvedAt: new Date() } });
+
+  res.json({ message: 'Teacher request approved and user role updated' });
+});
+
+// ----------- Admin: deny teacher request -----------
+app.patch('/api/users/deny-teacher/:email', requireAdmin, async (req, res) => {
+  const email = req.params.email;
+
+  const request = await teacherRequestCollection.findOne({ email, status: 'pending' });
+  if (!request) return res.status(404).json({ error: 'No pending request found for this user' });
+
+  // Update request status to rejected
+  await teacherRequestCollection.updateOne({ email }, { $set: { status: 'rejected', rejectedAt: new Date() } });
+
+  res.json({ message: 'Teacher request denied' });
+});
+
 
     // ===== Start Server =====
     app.listen(port, () => {
