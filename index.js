@@ -378,6 +378,41 @@ app.post('/confirm-enroll', async (req, res) => {
 
 
 
+// POST /payment-success
+app.post('/payment-success', async (req, res) => {
+  const { classId, email, paymentId, amount, classTitle } = req.body;
+
+  if (!classId || !email || !paymentId) {
+    return res.status(400).json({ success: false, message: "Missing data" });
+  }
+
+  try {
+    await db.collection('payments').insertOne({
+      email,
+      classId,
+      paymentId,
+      amount,
+      classTitle,
+      date: new Date()
+    });
+
+    await db.collection('enroll').insertOne({
+      email,
+      classId,
+      classTitle,
+      enrolledAt: new Date()
+    });
+
+    res.send({ success: true });
+  } catch (err) {
+    console.error('DB Error:', err);
+    res.status(500).json({ success: false, message: "DB Save failed" });
+  }
+});
+
+
+
+
 
 // Delete class
 app.delete('/classes/:id', async (req, res) => {
