@@ -727,6 +727,43 @@ app.post('/feedbacks', async (req, res) => {
 
 
 
+app.get('/api/feedbacks', async (req, res) => {
+  try {
+    const feedbacks = await feedbacksCollection.aggregate([
+      { $sort: { createdAt: -1 } },
+      { $limit: 10 },
+      {
+        $lookup: {
+          from: "users",
+          localField: "email",
+          foreignField: "email",
+          as: "user"
+        }
+      },
+      { $unwind: "$user" },
+      {
+        $project: {
+          _id: 1,
+          classId: 1,
+          feedback: 1,
+          rating: 1,
+          createdAt: 1,
+          "user.name": 1,
+          "user.photo": 1,
+        }
+      }
+    ]).toArray();
+
+    res.json(feedbacks);
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: "Failed to fetch feedbacks" });
+  }
+});
+
+
+
+
 
 
 
