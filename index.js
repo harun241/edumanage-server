@@ -382,7 +382,7 @@ app.post('/confirm-enroll', async (req, res) => {
 // Delete class
 app.delete('/classes/:id', async (req, res) => {
   const id = req.params.id;
-  const result = await classesCollection.deleteOne({ _id: new ObjectId(id) });
+  const result = await classCollection.deleteOne({ _id: new ObjectId(id) });
   res.send(result); // result.deletedCount > 0 means success
 });
 
@@ -390,7 +390,7 @@ app.delete('/classes/:id', async (req, res) => {
 app.put('/classes/:id', async (req, res) => {
   const id = req.params.id;
   const updatedData = req.body;
-  const result = await classesCollection.updateOne(
+  const result = await classCollection.updateOne(
     { _id: new ObjectId(id) },
     { $set: updatedData }
   );
@@ -405,7 +405,7 @@ app.patch("/classes/:id/status", requireAdmin, async (req, res) => {
   const { id } = req.params;
   const { status } = req.body;
 
-  const result = await classesCollection.updateOne(
+  const result = await classCollection.updateOne(
     { _id: new ObjectId(id) },
     { $set: { status } }
   );
@@ -690,21 +690,6 @@ app.post('/feedbacks', async (req, res) => {
   }
 });
 
-
-app.get('/classes/top-rated', async (req, res) => {
-  const topClasses = await classesCollection.find({ status: 'approved' }).sort({ enrollCount: -1 }).limit(6).toArray();
-  res.send(topClasses);
-});
-
-
-app.get('/classes/popular', async (req, res) => {
-  const popularClasses = await classesCollection
-    .find({})
-    .sort({ enrolled: -1 }) // Sort by highest enrollment
-    .limit(6)
-    .toArray();
-  res.send(popularClasses);
-});
 
 
 
