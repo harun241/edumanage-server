@@ -763,6 +763,45 @@ app.get('/api/feedbacks', async (req, res) => {
 
 
 
+app.get("/api/popular-classes", async (req, res) => {
+  try {
+    const result = await db.collection("enroll").aggregate([
+      {
+        $group: {
+          _id: "$classId",
+          count: { $sum: 1 },
+        },
+      },
+      { $sort: { count: -1 } },
+      { $limit: 6 },
+      {
+        $lookup: {
+          from: "classes",
+          localField: "_id",
+          foreignField: "_id", // make sure classId is ObjectId
+          as: "classData",
+        },
+      },
+      {
+        $unwind: "$classData",
+      },
+      {
+        $project: {
+          _id: "$classData._id",
+          title: "$classData.title",
+          image: "$classData.image",
+          instructor: "$classData.instructor",
+          studentsEnrolled: "$count",
+        },
+      },
+    ]).toArray();
+
+    res.send(result);
+  } catch (error) {
+    console.error("Popular classes fetch failed:", error);
+    res.status(500).send({ message: "Internal server error" });
+  }
+});
 
 
 
