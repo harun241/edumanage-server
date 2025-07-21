@@ -10,7 +10,7 @@ const port = process.env.PORT || 3000;
 const uri = process.env.MONGO_URI;
 
 app.use(cors({
-  origin: '*',
+  origin: ['http://localhost:5173','https://edumanage-d78f1.web.app'],
   allowedHeaders: ['Content-Type', 'x-user-email', 'x-user-role'],
 }));
 app.use(express.json());
@@ -815,7 +815,7 @@ async function run() {
 
     // ===== Start Server =====
     app.listen(port, () => {
-      console.log(`🚀 Server running at http://edumanage-server-2qt9tuc5b-haruns-projects-63d4b953.vercel.app`);
+      console.log(`🚀 Server running at https://edumanage-server-rho.vercel.app`);
     });
 
     process.on('SIGINT', async () => {
