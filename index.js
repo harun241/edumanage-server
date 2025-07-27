@@ -184,31 +184,39 @@ async function run() {
 
     });
 
-    app.put('/classes/:id', async (req, res) => {
-      const id = req.params.id;
-      const update = req.body;
+   app.put('/classes/:id', async (req, res) => {
+  const id = req.params.id;
+  const update = req.body;
 
-      if (!ObjectId.isValid(id)) return res.status(400).json({ error: 'Invalid ID' });
+  if (!ObjectId.isValid(id)) return res.status(400).json({ error: 'Invalid ID' });
 
-      const classDoc = await classCollection.findOne({ _id: new ObjectId(id) });
-      if (!classDoc) return res.status(404).json({ error: 'Class not found' });
+  // Find class document first
+  const classDoc = await classCollection.findOne({ _id: new ObjectId(id) });
+  if (!classDoc) return res.status(404).json({ error: 'Class not found' });
 
-      if (req.user.role !== 'admin' && req.user.email !== classDoc.email) {
-        return res.status(403).json({ error: 'Unauthorized' });
-      }
+  // Check email from the request body, fallback to headers if missing
+  const email = update.email || req.user.email;
 
-      const allowedFields = ['title', 'price', 'description', 'image'];
-      const updateFields = {};
-      for (const key of allowedFields) {
-        if (update[key]) updateFields[key] = update[key];
-      }
+  // Authorize only the class owner or admin
+  if (req.user.role !== 'admin' && email !== classDoc.email) {
+    return res.status(403).json({ error: 'Unauthorized' });
+  }
 
-      const result = await classCollection.updateOne(
-        { _id: new ObjectId(id) },
-        { $set: updateFields }
-      );
-      res.json({ message: 'Class updated', modifiedCount: result.modifiedCount });
-    });
+  // Allowed fields to update
+  const allowedFields = ['title', 'price', 'description', 'image', 'availableSeats'];
+  const updateFields = {};
+  for (const key of allowedFields) {
+    if (update[key] !== undefined) updateFields[key] = update[key];
+  }
+
+  const result = await classCollection.updateOne(
+    { _id: new ObjectId(id) },
+    { $set: updateFields }
+  );
+
+  res.json({ message: 'Class updated', modifiedCount: result.modifiedCount });
+});
+
 
     app.patch('/classes/:id/status', requireAdmin, async (req, res) => {
       const id = req.params.id;
